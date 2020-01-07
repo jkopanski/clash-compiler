@@ -838,18 +838,46 @@ reduceConstant isSubj tcm h k nm pInfo tys args = case nm of
     -> reduce (boolToBoolLiteral tcm ty (i >= j))
 
   "GHC.Classes.&&"
-    | [DC lCon _
-      ,DC rCon _] <- args
-    -> reduce $ boolToBoolLiteral tcm ty
-         ((nameOcc (dcName lCon) == "GHC.Types.True") &&
-          (nameOcc (dcName rCon) == "GHC.Types.True"))
+    | [ lArg , rArg ] <- args
+    -- evaluation of the arguments is deferred until the evaluation of the primop
+    -- to make `&&` lazy in both arguments
+    , (h1, [], lArgWHNF) <- whnf reduceConstant tcm True (h , [], valToTerm lArg)
+    , (h2, [], rArgWHNF) <- whnf reduceConstant tcm True (h1, [], valToTerm rArg)
+    -> case [ lArgWHNF, rArgWHNF ] of
+         [ Data lCon, Data rCon ] ->
+           Just $ (h2,k,) $ boolToBoolLiteral tcm ty
+             ((nameOcc (dcName lCon) == "GHC.Types.True") &&
+              (nameOcc (dcName rCon) == "GHC.Types.True"))
+         [ Data lCon, _ ] ->
+           case nameOcc (dcName lCon) of
+             "GHC.Types.True" -> reduce rArgWHNF
+             _ -> reduce (boolToBoolLiteral tcm ty False)
+         [ _, Data rCon ] ->
+          case nameOcc (dcName rCon) of
+             "GHC.Types.True" ->  reduce lArgWHNF
+             _ -> reduce (boolToBoolLiteral tcm ty False)
+         _ -> Nothing
 
   "GHC.Classes.||"
-    | [DC lCon _
-      ,DC rCon _] <- args
-    -> reduce $ boolToBoolLiteral tcm ty
-         ((nameOcc (dcName lCon) == "GHC.Types.True") ||
-          (nameOcc (dcName rCon) == "GHC.Types.True"))
+    -- evaluation of the arguments is deferred until the evaluation of the primop
+    -- to make `||` lazy in both arguments
+    | [ lArg , rArg ] <- args
+    , (h1, [], lArgWHNF) <- whnf reduceConstant tcm True (h , [], valToTerm lArg)
+    , (h2, [], rArgWHNF) <- whnf reduceConstant tcm True (h1, [], valToTerm rArg)
+    -> case [ lArgWHNF, rArgWHNF ] of
+         [ Data lCon, Data rCon ] ->
+           Just $ (h2,k,) $ boolToBoolLiteral tcm ty
+             ((nameOcc (dcName lCon) == "GHC.Types.True") ||
+              (nameOcc (dcName rCon) == "GHC.Types.True"))
+         [ Data lCon, _ ] ->
+           case nameOcc (dcName lCon) of
+             "GHC.Types.False" -> reduce rArgWHNF
+             _ -> reduce (boolToBoolLiteral tcm ty True)
+         [ _, Data rCon ] ->
+          case nameOcc (dcName rCon) of
+             "GHC.Types.False" ->  reduce lArgWHNF
+             _ -> reduce (boolToBoolLiteral tcm ty True)
+         _ -> Nothing
 
   "GHC.Classes.divInt#" | Just (i,j) <- intLiterals args
     -> reduce (integerToIntLiteral (i `div` j))
